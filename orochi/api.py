@@ -11,7 +11,7 @@ class APIError(RuntimeError):
 
 class EightTracksAPI(object):
 
-    def __init__(self):
+    def __init__(self, userToken=None):
         self.base_url = 'https://8tracks.com/'
         self.s = requests.Session()
         self.s.headers.update({
@@ -19,8 +19,16 @@ class EightTracksAPI(object):
             'X-Api-Version': 2,
             'Accept': 'application/json',
         })
+
         self.play_token = None
         self._user_token = None
+
+    def setUserToken(self, userToken):
+        #Addition for user token pre-configured
+        self.s.headers.update({
+            'X-User-Token':userToken
+        })
+        self._user_token = userToken
 
     def _get(self, resource, params={}, **kwargs):
         """Do a GET request to the specified API resource.
@@ -118,7 +126,10 @@ class EightTracksAPI(object):
             self._post('logout')
             data = self._post('sessions.json', auth=(username, password))
             self._user_token = data['user_token']
+            self._user_id = data['current_user']['id']
             self.s.headers.update({'X-User-Token': self._user_token})
+            return self._user_id
+        return 0 #Should this assert??
 
     def search_mix(self, query_type, query, sort, page, per_page):
         """Search for a mix by term, tag, user or user_liked.
@@ -152,7 +163,7 @@ class EightTracksAPI(object):
                 'page': page,
                 'per_page': per_page,
                 }
-        resource = 'mixes.json'
+        resource = 'mixes?format=json'
 
         if query_type == 'tag':
             parts = query.split(',')
@@ -162,10 +173,10 @@ class EightTracksAPI(object):
             else:
                 params['tags'] = '+'.join(tags)
         elif query_type == 'user':
-            resource = 'users/{username}/mixes.json'.format(username=query)
+            resource = 'users/{userID}/mixes?format=json'.format(userID=query)
         elif query_type == 'user_liked':
             params['view'] = 'liked'
-            resource = 'users/{username}/mixes.json'.format(username=query)
+            resource = 'users/{userID}/mixes?format=json&view=liked'.format(userID=query)
         elif query_type == 'keyword':
             params['q'] = query
 

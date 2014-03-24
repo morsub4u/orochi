@@ -52,7 +52,8 @@ class ConfigFile(object):
     each write."""
 
     DEFAULT_CONFIG_KEYS = ['mplayer_extra_arguments', 'username', 'password',
-             'autologin', 'results_per_page', 'results_sorting']
+             'autologin', 'results_per_page', 'results_sorting', 'defaultVolume',
+             'userToken']
 
     def __init__(self, filename=None):
         if not filename:
@@ -136,6 +137,7 @@ class Client(CmdExitMixin, cmd.Cmd, object):
         self.config = ConfigFile()
         self._logged_in = None
         self._user_name = ''
+        self._user_id = 0
         self._password = ''
         self._search_term = None
         self._search_results_page = 1
@@ -151,7 +153,11 @@ class Client(CmdExitMixin, cmd.Cmd, object):
             self._results_sorting = self.config['results_sorting']
 
         # Try to login if autologin is on.
-        if self.config['username'] and self.config['password'] and self.config['autologin']:
+        if self.config['userToken']:
+            print("Logging on using user token!")
+            self.api.setUserToken(self.config['userToken'])
+            self.do_login(self.config['username'], password="NOONECARES")
+        elif self.config['username'] and self.config['password'] and self.config['autologin']:
             self.do_login(self.config['username'], password=self.config['password'])
         return super(Client, self).preloop()
 
@@ -341,6 +347,11 @@ class Client(CmdExitMixin, cmd.Cmd, object):
                     mix_id = typed_val
                     mix = self.api.get_mix_with_id(mix_id)
                     is_valid = True
+
+                #Now set the first mix correctly
+                self.mixName = mix['name'].encode('utf8')
+
+
             except ValueError:
                 print('*** Invalid mix number: Please run a search first and then '
                       'specify a mix number to play.')
@@ -359,6 +370,7 @@ class Client(CmdExitMixin, cmd.Cmd, object):
                 return
             except HTTPError as e:
                 print('*** HTTP Error: {}'.format(e))
+            self.mixName = mix['name'].encode('utf8')
             i.prompt = get_prompt(mix).encode('utf8')
             i.cmdloop()
 
@@ -381,8 +393,8 @@ class Client(CmdExitMixin, cmd.Cmd, object):
             self._user_name = s.strip()
             self._password = password or getpass('Password: ')
             try:
-                self.api._obtain_user_token(self._user_name, self._password, force_refresh=True)
-                print('Successfully logged in as %s!' % self._user_name)
+                self._user_id = self.api._obtain_user_token(self._user_name, self._password, force_refresh=True)
+                print('Successfully logged in as %s (%d)!' % (self._user_name, self._user_id))
                 self._logged_in = True
             except HTTPError:
                 self._logged_in = None
@@ -402,7 +414,7 @@ class Client(CmdExitMixin, cmd.Cmd, object):
         if not self._logged_in:
             print('You must first be logged in. Use login command.')
         else:
-            self.do_search_user_liked(self._user_name)
+            self.do_search_user_liked(self._user_id)
 
     def help_liked_mixes(self):
         print('List liked mixes (login required).')
@@ -469,11 +481,12 @@ class PlayCommand(cmd.Cmd, object):
         self.mix_id = mix_id
         self.parent_cmd = parent_cmd
         self.api = parent_cmd.api
+        self.mplayerArgs = config['mplayer_extra_arguments'] 
 
         r = super(PlayCommand, self).__init__(*args, **kwargs)
 
         # Initialize mplayer
-        self.p = MPlayer(extra_arguments=config['mplayer_extra_arguments'])
+        self.p = MPlayer(extra_arguments=self.mplayerArgs, volume=config.get('defaultVolume',10))
 
         # Register signal handlers
         signal.signal(signal.SIGUSR1, self._song_end_handler)
@@ -482,6 +495,7 @@ class PlayCommand(cmd.Cmd, object):
         # Play first track
         self.status = self.api.play_mix(mix_id)
         self.p.load(self.status['track']['url'])
+        
         if self.parent_cmd.volume is not None:
             self.p.volume(self.parent_cmd.volume)
         self.do_status()
@@ -576,6 +590,7 @@ class PlayCommand(cmd.Cmd, object):
         print('Skipping to the next mix...')
         mix = self.api.next_mix(self.mix_id)
         self.mix_id = mix['id']
+        self.mixName = mix['name'].encode('utf8')
         self.prompt = get_prompt(mix).encode('utf8')
 
         self.status = self.api.play_mix(self.mix_id)

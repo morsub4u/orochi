@@ -29,7 +29,7 @@ class DeadMPlayer(object):
 
 class MPlayer(object):
 
-    def __init__(self, timeout=15, extra_arguments=''):
+    def __init__(self, timeout=15, extra_arguments='', volume = 10):
         """Create a new asynchronous MPlayer process.
 
         The mplayer process will be started in slave mode and with line
@@ -44,21 +44,31 @@ class MPlayer(object):
                 process.
 
         """
+        #Check to see if MPLAYER is installed
         with open(os.devnull, 'w') as devnull:
             command = ['mplayer', '--version']
             retcode = subprocess.call(command, stdout=devnull, stderr=devnull, shell=True)
         if retcode == 127:
             msg = 'mplayer binary not found. Are you sure MPlayer is installed?'
             raise InitializationError(msg)
+
+        #Now setup MPLAYER to stream audio
         self.timeout = timeout
         command = ['mplayer',
             '-slave', '-idle',
             '-really-quiet', '-msglevel', 'global=6:cplayer=4', '-msgmodule',
             '-input', 'nodefault-bindings',
             '-vo', 'null',
-            '-cache', '1024']
+            '-cache', '1024',
+            '-volume', str(volume)]
         if extra_arguments:
             command.extend(extra_arguments.split(' '))
+
+        copycommand = ""
+        for items in command:
+            copycommand += items + " " 
+
+        #print("Starting Mplayer with: %s" %str(copycommand))
         self.p = Process(command, bufsize=1)
         self.t = None
         self.write_lock = threading.Lock()
@@ -138,8 +148,10 @@ class MPlayer(object):
         # Load file, wait for command to finish
         self._send_command('loadfile {}', path)
         start = time.time()
+
         while 1:
-            if 'CPLAYER: Starting playback...' in self.p.read():
+            pData = self.p.read()
+            if 'CPLAYER: Starting playback...' in pData:
                 break
             if time.time() - start > self.timeout:  # TODO use sigalarm or sigusr2 instead
                 self.terminate()
@@ -165,7 +177,7 @@ class MPlayer(object):
                         process.write('{} get_time_pos\n'.format(pausing_keep))
                 stdout = process.read()
                 if stdout:
-                    if 'GLOBAL: EOF code: 1' in stdout:
+                    if 'GLOBAL: EOF code: 1' in stdout:         #End of a playing track
                         os.kill(os.getpid(), signal.SIGUSR1)
                     if not reported:
                         match = time_pos_rex.search(stdout)
@@ -173,10 +185,15 @@ class MPlayer(object):
                             os.kill(os.getpid(), signal.SIGUSR2)
                             reported = True
                 stop_event.wait(0.5)
+
         self.t_stop = threading.Event()
         thread_args = (self.p, self.t_stop, self.write_lock, self.pausing_keep)
         self.t = threading.Thread(target=playback_status, args=thread_args)
         self.t.daemon = True
+
+        #Set the volume for playback
+#        self.volume(self.defaultVolume)
+
         self.t.start()
 
     def playpause(self):
